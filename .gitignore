@@ -1,0 +1,41 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.[oa]
+
+# Virtual environment
+.venv
+venv
+env
+ENV
+pip-freeze.txt
+pipenv-setup.lock
+
+# Sensitive configuration file
+.env
+
+# Database file (Users should generate their own)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE / Editor directories
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker related (optional, depending on your setup)
+# docker-compose.override.yml

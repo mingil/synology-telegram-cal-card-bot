@@ -1,0 +1,14 @@
+# /volume1/docker/bot-cal-card/docker-compose.yml
+version: '3.8'
+
+services:
+  bot:
+    container_name: bot-cal-card
+    build: .
+    restart: on-failure:5
+    env_file: .env
+    environment:
+      - TZ=Asia/Seoul
+    volumes:
+      # 현재 폴더(.)를 통째로 연결해서 DB가 저장되게 함
+      - .:/app
