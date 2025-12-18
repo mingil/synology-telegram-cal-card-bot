@@ -674,7 +674,7 @@ def main() -> None:
     if application.job_queue:
         application.job_queue.run_daily(
             scheduled_lunar_alarm, 
-            time=datetime.time(hour=9, minute=0, second=0, tzinfo=pytz.timezone('Asia/Seoul'))
+            time=datetime.time(hour=7, minute=0, second=0, tzinfo=pytz.timezone('Asia/Seoul'))
         )
         logger.info("📅 음력 기념일 알림 스케줄러 등록 완료 (매일 09:00)")
     # ==========================================================
