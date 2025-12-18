@@ -1338,14 +1338,22 @@ async def date_input_received(update: Update, context: ContextTypes.DEFAULT_TYPE
 @check_ban
 @require_auth
 async def findcontact_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
     logger.info(f"User {update.effective_user.first_name} initiated /findcontact conversation.")
     await _clear_other_conversations(context, [])
-    await update.message.reply_text(
-        "👤 누구의 연락처를 찾아드릴까요?\n"
-        "검색할 이름을 입력해주세요.\n\n"
-        "취소하려면 /cancel 을 입력하세요."
-    )
+
+    # [수정] 버튼 클릭과 명령어 입력 모두 대응
+    target_msg_obj = None
+    if update.message:
+        target_msg_obj = update.message
+    elif update.callback_query and update.callback_query.message:
+        target_msg_obj = update.callback_query.message
+        
+    if target_msg_obj:
+        await target_msg_obj.reply_text(
+            "👤 누구의 연락처를 찾아드릴까요?\n"
+            "검색할 이름을 입력해주세요.\n\n"
+            "취소하려면 /cancel 을 입력하세요."
+        )
     return FindContactStates.WAITING_NAME
 
 # !!!!! findcontact_name_received 함수 전체를 아래 코드로 교체 !!!!!
@@ -1607,15 +1615,26 @@ async def addcontact_email_received(update: Update, context: ContextTypes.DEFAUL
 @check_ban
 @require_auth
 async def searchcontact_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
     logger.info(f"User {update.effective_user.first_name} initiated /searchcontact conversation.")
     await _clear_other_conversations(context, [])
-    await update.message.reply_text(
-        "🔎 어떤 키워드로 연락처를 검색하시겠어요?\n"
-        "찾고 싶은 <b>이름, 이메일, 전화번호의 일부</b>를 입력해주세요.\n\n"
-        "취소하려면 /cancel",
-        parse_mode='HTML'
-    )
+
+    # [수정] 버튼 클릭(CallbackQuery)과 명령어 입력(Message) 모두 대응하도록 수정
+    target_msg_obj = None
+    if update.message:
+        target_msg_obj = update.message
+    elif update.callback_query and update.callback_query.message:
+        target_msg_obj = update.callback_query.message
+
+    if target_msg_obj:
+        await target_msg_obj.reply_text(
+            "🔎 어떤 키워드로 연락처를 검색하시겠어요?\n"
+            "찾고 싶은 <b>이름, 이메일, 전화번호의 일부</b>를 입력해주세요.\n\n"
+            "취소하려면 /cancel",
+            parse_mode='HTML'
+        )
+    else:
+        logger.error("searchcontact_start: No message object found to reply to.")
+
     return SearchContactStates.WAITING_KEYWORD
 
 # !!!!! searchcontact_keyword_received 함수 전체를 아래 코드로 교체 !!!!!

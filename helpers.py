@@ -179,11 +179,11 @@ def fetch_caldav_events(start_dt: datetime, end_dt: datetime, url: str, username
             event.pop('_key', None) # _uid 대신 _key 사용했으므로 _key 제거
 
         return True, events_details
-    except (ConnectionRefusedError, caldav.lib.error.AuthorizationError, caldav.lib.error.AuthenticationError, caldav.lib.error.DAVError) as dav_err:
+    except (ConnectionRefusedError, caldav.lib.error.AuthorizationError, Exception, caldav.lib.error.DAVError) as dav_err:
          logger.error(f"CalDAV connection/auth/server error: {dav_err}", exc_info=True)
          error_msg = f"CalDAV 서버 오류 ({type(dav_err).__name__})"
          if isinstance(dav_err, ConnectionRefusedError): error_msg = "CalDAV 서버 연결 거부됨"
-         elif isinstance(dav_err, (caldav.lib.error.AuthorizationError, caldav.lib.error.AuthenticationError)): error_msg = "CalDAV 인증/권한 오류"
+         elif isinstance(dav_err, (caldav.lib.error.AuthorizationError, Exception)): error_msg = "CalDAV 인증/권한 오류"
          return False, error_msg
     except Exception as conn_err:
         logger.error(f"CalDAV connection or processing error: {conn_err}", exc_info=True)
@@ -1300,7 +1300,7 @@ def delete_caldav_event(
         return False, f"예기치 않은 오류 발생: {e}"
 # ====================================================================================
 
-# [helpers.py 맨 아래에 이어서 붙여넣기]
+# helpers.py 맨 마지막에 있는 check_upcoming_lunar_events 함수 전체 교체
 
 def check_upcoming_lunar_events(days_offset: int) -> List[str]:
     """
@@ -1318,17 +1318,25 @@ def check_upcoming_lunar_events(days_offset: int) -> List[str]:
     
     lunar_month = k_calendar.lunarMonth
     lunar_day = k_calendar.lunarDay
+    is_leap = k_calendar.isIntercalation
+
+    logger.info(f"[Lunar Check] {days_offset}일 뒤({target_date_solar.strftime('%Y-%m-%d')})는 음력 {lunar_month}월 {lunar_day}일(윤달:{is_leap}) 입니다.")
     
-    # 3. 캘린더 검색 (올해의 해당 음력 월/일에 일정이 있는지 조회)
-    # 예: 음력 11월 05일이 생일이면, 사용자는 양력 11월 05일에 반복 일정을 등록해둠
+    # 3. 캘린더 검색
     try:
         current_year = datetime.now().year
-        # 검색할 날짜: 올해의 [음력 월] [음력 일]
-        search_start = datetime(current_year, lunar_month, lunar_day, 0, 0, 0)
+        # 검색할 날짜: 올해의 [음력 월] [음력 일] (예: 음력 10월 30일을 찾기 위해 양력 10월 30일을 검색)
+        try:
+            search_start = datetime(current_year, lunar_month, lunar_day, 0, 0, 0)
+        except ValueError:
+            # 윤년 등으로 날짜가 없는 경우 (예: 2월 30일 등)
+            logger.warning(f"[Lunar Check] {current_year}년 {lunar_month}월 {lunar_day}일은 존재하지 않아 건너뜁니다.")
+            return []
+
         search_end = search_start + timedelta(days=1)
         
-        # 캘린더 조회
-        events = fetch_caldav_events(
+        # [중요 수정] 반환값은 (성공여부, 리스트) 튜플입니다. 이를 분리(Unpacking)해야 합니다.
+        success, events = fetch_caldav_events(
             search_start, 
             search_end, 
             config.CALDAV_URL, 
@@ -1336,25 +1344,31 @@ def check_upcoming_lunar_events(days_offset: int) -> List[str]:
             config.CALDAV_PASSWORD
         )
 
-        if isinstance(events, list):
+        # 성공했고, events가 리스트일 때만 실행
+        if success and isinstance(events, list):
+            logger.info(f"[Lunar Check] 검색 날짜: {search_start.strftime('%Y-%m-%d')} / 조회된 일정 수: {len(events)}")
             for event in events:
                 title = event.get('summary', '')
-                # 키워드 체크: '음력', 'lunar', '생일' 등이 포함되어 있는지 확인
+                # 키워드 체크: 제목에 '음력' 또는 'Lunar'가 있어야 함
                 if '음력' in title or 'Lunar' in title:
+                    d_day_str = "오늘"
+                    if days_offset == 1: d_day_str = "내일"
+                    elif days_offset > 1: d_day_str = f"{days_offset}일 뒤"
+
                     msg = (
                         f"🔔 <b>[음력 기념일 알림]</b>\n"
-                        f"{days_offset}일 뒤({target_date_solar.strftime('%Y-%m-%d')})는\n"
-                        f"<b>{title}</b> 입니다!\n"
+                        f"{d_day_str} ({target_date_solar.strftime('%m월 %d일')})은\n"
+                        f"<b>{html.escape(title)}</b> 입니다! 🎉\n"
                         f"(음력 {lunar_month}월 {lunar_day}일)"
                     )
                     messages.append(msg)
-                    
-    except ValueError:
-        # 음력 날짜가 양력 달력에 없는 경우 (예: 2월 30일) 등은 무시
-        pass
+                    logger.info(f"[Lunar Check] 알림 생성 성공: {title}")
+        else:
+            logger.warning(f"[Lunar Check] 캘린더 조회 실패 또는 일정 없음: {events}")
+
     except Exception as e:
-        logger.error(f"음력 일정 확인 중 에러: {e}")
+        logger.error(f"음력 일정 확인 중 에러: {e}", exc_info=True)
 
     return messages
-
+    
 # --- End of File ---

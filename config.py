@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # --- Telegram & AI ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-AI_MODEL_NAME = 'gemini-1.5-pro-latest'
+AI_MODEL_NAME = 'gemini-2.5-flash'
 
 # --- CalDAV ---
 CALDAV_URL = os.getenv("CALDAV_URL")
