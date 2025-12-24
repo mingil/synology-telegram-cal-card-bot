@@ -150,3 +150,21 @@ def is_notification_sent(event_uid: str, target_date: str, noti_type: str) -> bo
     result = cursor.fetchone()
     conn.close()
     return result is not None
+
+# core/database.py (맨 아래에 추가)
+
+def revoke_permission(user_id: int) -> bool:
+    """허용 목록에서 사용자 제거"""
+    conn = sqlite3.connect(config.DB_FILE)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM permitted_users WHERE user_id = ?", (user_id,))
+        if cursor.rowcount > 0:
+            conn.commit()
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"허용 취소 실패: {e}")
+        return False
+    finally:
+        conn.close()

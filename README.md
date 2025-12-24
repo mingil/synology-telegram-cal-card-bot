@@ -1,4 +1,4 @@
-# 🤖 Synology Telegram Cal-Card Bot (v2.1 Refactored)
+# 🤖 Synology Telegram Cal-Card Bot (v2.2)
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)
 ![Synology](https://img.shields.io/badge/Synology-DSM7-darkblue?logo=synology&logoColor=white)
@@ -9,7 +9,7 @@ A powerful Telegram bot designed for **Synology NAS**. It integrates with **Syno
 
 시놀로지 NAS를 위한 강력한 텔레그램 봇입니다. **캘린더(CalDAV)** 및 **연락처(CardDAV)**와 연동되어 일정 알림, 검색 기능을 제공하며, 특히 매년 변하는 **음력 생일**을 자동으로 계산하여 알려줍니다.
 
-> **v2.1 Update:** Layered Architecture(계층형 아키텍처)가 적용되어 유지보수성과 확장성이 대폭 강화되었습니다.
+> **v2.2 Update:** 관리자 기능이 대화형(Interactive)으로 강화되었으며, 연락처 상세 조회 및 구조적 리팩토링이 완료되었습니다.
 
 ---
 
@@ -90,8 +90,13 @@ Command,Description
 /addcontact,새 연락처 추가
 /ask,AI에게 질문하기
 /cancel,현재 진행 중인 작업 취소
-/banlist,(관리자) 차단된 사용자 목록
-/permitlist,(관리자) 승인된 사용자 목록
+Admin Only,관리자 전용 기능
+/ban,사용자 차단 (대화형)
+/unban,차단 해제 (대화형)
+/permit,권한 부여 (대화형)
+/revoke,권한 취소 (대화형)
+/banlist,차단된 사용자 목록 조회
+/permitlist,승인된 사용자 목록 조회
 
 🛠️ Development
 Requirements
@@ -104,7 +109,6 @@ Bash
 
 pip install -r requirements.txt
 python bot.py
+
 📝 License
 This project is licensed under the MIT License.
-
-```
