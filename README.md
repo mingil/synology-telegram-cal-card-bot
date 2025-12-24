@@ -1,4 +1,4 @@
-# 🤖 Synology Telegram Cal-Card Bot
+# 🤖 Synology Telegram Cal-Card Bot (v2.1 Refactored)
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)
 ![Synology](https://img.shields.io/badge/Synology-DSM7-darkblue?logo=synology&logoColor=white)
@@ -9,24 +9,102 @@ A powerful Telegram bot designed for **Synology NAS**. It integrates with **Syno
 
 시놀로지 NAS를 위한 강력한 텔레그램 봇입니다. **캘린더(CalDAV)** 및 **연락처(CardDAV)**와 연동되어 일정 알림, 검색 기능을 제공하며, 특히 매년 변하는 **음력 생일**을 자동으로 계산하여 알려줍니다.
 
+> **v2.1 Update:** Layered Architecture(계층형 아키텍처)가 적용되어 유지보수성과 확장성이 대폭 강화되었습니다.
+
 ---
 
 ## ✨ Key Features (주요 기능)
 
-- 📅 **Smart Reminders**: Get notified 1 day, 1 hour, or 15 mins before events.  
-  (스마트 알림: 일정 하루 전, 1시간 전, 15분 전 등 맞춤 알림 제공)
-- 🌕 **Lunar Birthday Support**: Automatically calculates Korean Lunar dates. Just add "(음력)" to your event title!  
-  (음력 지원: 캘린더 일정 제목에 "(음력)"만 넣으면 매년 자동으로 계산해서 알려줍니다.)
-- 🔍 **Instant Search**: Search contacts and schedules directly from Telegram chat.  
-  (즉시 검색: 채팅창에서 바로 연락처와 일정을 검색할 수 있습니다.)
-- 🐳 **Docker Ready**: Easy installation via Docker Compose on Synology Container Manager.  
-  (도커 지원: 시놀로지 컨테이너 매니저를 통해 간편하게 설치 가능합니다.)
+- 📅 **Smart Reminders**: 일정 하루 전, 당일 등 맞춤형 자동 알림 발송.
+- 🌕 **Lunar Birthday Support**: 캘린더 제목에 `(음력)` 포함 시, 매년 변하는 음력 날짜를 자동 계산하여 알림.
+- 🔍 **Instant Search**: 텔레그램 채팅창에서 바로 일정 키워드 검색.
+- 👤 **Detailed Contact Info**: 이름, 전화번호뿐만 아니라 **주소, 회사, 직함, 메모**까지 상세 정보 조회.
+- 🧠 **AI Integration**: Google Gemini AI와 연동하여 봇과 대화 가능.
+- 🛡️ **Security**: 비밀번호 인증 시스템 및 차단/허용 관리 기능 탑재.
 
 ---
 
-## 🚀 Installation (설치 방법)
+## 🏗️ Project Structure (프로젝트 구조)
 
-### 1. Clone Repository (저장소 다운로드)
-Download this repository to your Synology NAS (via SSH or Download ZIP).
-```bash
-git clone [https://github.com/mingil/synology-telegram-cal-card-bot.git](https://github.com/mingil/synology-telegram-cal-card-bot.git)
+이 프로젝트는 **관심사의 분리(SoC)** 원칙에 따라 모듈화되어 있습니다.
+
+```text
+bot-cal-card/
+├── core/                  # 프로젝트 설정 및 데이터베이스
+│   ├── config.py          # 환경변수 로드
+│   └── database.py        # SQLite DB 관리 (알림 중복 방지, 유저 관리)
+│
+├── services/              # 핵심 비즈니스 로직
+│   ├── caldav_service.py  # 캘린더 연동 (CalDAV)
+│   ├── carddav_service.py # 연락처 연동 (CardDAV)
+│   └── notification.py    # 알림 스케줄링 및 음력 계산 로직
+│
+├── handlers/              # 텔레그램 명령어 핸들러
+│   ├── auth.py            # 인증 및 관리자 기능
+│   ├── calendar.py        # 일정 조회/추가/삭제
+│   ├── contact.py         # 연락처 검색/추가
+│   └── common.py          # 공통 기능 및 도움말
+│
+├── utils/                 # 유틸리티 함수
+│   ├── date_utils.py      # 날짜 계산 및 변환
+│   └── formatters.py      # 메시지 HTML 포맷팅
+│
+└── bot.py                 # 메인 실행 파일 (Application 진입점)
+
+🚀 Installation (설치 방법)
+1. Prerequisites
+Synology NAS (Docker support) or any Linux Server
+
+Telegram Bot Token
+
+Google Gemini API Key (Optional)
+
+2. Setup with Docker Compose
+Clone this repository.
+
+Create .env file from example.
+
+Bash
+
+cp .env.example .env
+Edit .env and fill in your information.
+
+Run container.
+
+Bash
+
+docker-compose up -d --build
+
+💬 Commands (명령어 목록)
+Command,Description
+/start,"봇 시작 및 인증, 메인 메뉴 호출"
+/help,전체 명령어 도움말 보기
+/today,오늘 일정 조회
+/week,이번 주 일정 조회
+/month,이번 달 일정 조회
+/date,특정 날짜 일정 조회
+/search_events,일정 키워드 검색
+/addevent,새 일정 추가 (대화형)
+/findcontact,연락처 이름 검색
+/searchcontact,"연락처 상세 검색 (전화번호, 회사 등)"
+/addcontact,새 연락처 추가
+/ask,AI에게 질문하기
+/cancel,현재 진행 중인 작업 취소
+/banlist,(관리자) 차단된 사용자 목록
+/permitlist,(관리자) 승인된 사용자 목록
+
+🛠️ Development
+Requirements
+Python 3.9+
+
+requirements.txt dependencies
+
+Local Run
+Bash
+
+pip install -r requirements.txt
+python bot.py
+📝 License
+This project is licensed under the MIT License.
+
+```
