@@ -6,13 +6,10 @@ import calendar
 from datetime import datetime, date, time, timedelta
 from enum import IntEnum
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-
-# [수정] ChatAction, ParseMode는 telegram.constants에서 가져옴
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error
 from telegram.constants import ParseMode, ChatAction
 from telegram.ext import ContextTypes, ConversationHandler
 
-from core import config
 from services import caldav_service
 from utils import date_utils, formatters
 from handlers.decorators import check_ban, require_auth
@@ -36,13 +33,6 @@ class AddEventStates(IntEnum):
     WAITING_END_OR_ALLDAY = 4
 
 
-class DeleteEventStates(IntEnum):
-    SELECT_METHOD = 1
-    WAITING_KEYWORD = 2
-    SELECT_EVENT = 3
-    CONFIRM_DELETION = 4
-
-
 # --- 내부 유틸리티 ---
 async def _fetch_and_send_events(
     update: Update,
@@ -52,39 +42,86 @@ async def _fetch_and_send_events(
     period_str: str,
 ):
     chat_id = update.effective_chat.id
+    # 메시지 전송 시도
     msg = await context.bot.send_message(chat_id, f"🗓️ {period_str} 일정 확인 중...")
     await context.bot.send_chat_action(chat_id, action=ChatAction.TYPING)
 
-    success, result = await asyncio.to_thread(
+    # 서비스 호출
+    result_tuple = await asyncio.to_thread(
         caldav_service.fetch_events, start_dt, end_dt
     )
+    success = result_tuple[0]
+    result = result_tuple[1]
 
+    # 1. 조회 실패 처리
     if not success:
-        await msg.edit_text(f"❌ 오류 발생: {result}")
+        await msg.edit_text(f"❌ 조회 오류 발생:\n{result}")
         return
+
+    # 2. 결과 없음 처리
     if not result:
         await msg.edit_text(
             f"✅ {period_str}에는 예정된 일정이 없습니다.", parse_mode=ParseMode.HTML
         )
         return
 
-    response = f"🗓️ <b>{period_str}</b> 일정입니다.\n"
+    # 3. 결과 포맷팅
+    response = f"🗓️ <b>{period_str}</b> 일정 ({len(result)}건)\n"
     events_by_date = {}
+
     for event in result:
-        start_dt_obj = event.get("start_dt")
-        date_key = str(start_dt_obj).split()[0]
+        # [핵심 수정] 키 이름 호환성 확보 ('start' 또는 'start_dt' 모두 확인)
+        start_obj = event.get("start") or event.get("start_dt")
+
+        if not start_obj:
+            logger.warning(f"⚠️ 날짜 정보 없음: {event}")
+            continue
+
+        # datetime 객체를 문자열 키(YYYY-MM-DD)로 변환
+        if isinstance(start_obj, datetime):
+            date_key = start_obj.strftime("%Y-%m-%d")
+        elif isinstance(start_obj, date):
+            date_key = start_obj.strftime("%Y-%m-%d")
+        else:
+            date_key = str(start_obj).split()[0]  # 최후의 수단
+
         if date_key not in events_by_date:
             events_by_date[date_key] = []
         events_by_date[date_key].append(event)
 
+    # 날짜순 정렬하여 텍스트 생성
     for d_key in sorted(events_by_date.keys()):
-        response += f"\n<b>{d_key}</b>\n"
+        # 날짜 헤더
+        response += f"\n📅 <b>{d_key}</b>\n"
         for evt in events_by_date[d_key]:
-            response += "  • " + formatters.format_event_to_html(evt) + "\n"
+            try:
+                # 포맷터 호출 (HTML 생성)
+                event_content = formatters.format_event_to_html(evt)
+                response += f" • {event_content}\n"
+            except Exception as e:
+                logger.error(f"포맷팅 에러: {e}")
+                response += f" • (표시 오류: {html.escape(evt.get('summary', '?'))})\n"
 
+    # 4. 메시지 길이 제한 처리 (텔레그램은 4096자 제한)
     if len(response) > 4000:
-        response = response[:4000] + "...\n(내용이 너무 깁니다)"
-    await msg.edit_text(response, parse_mode=ParseMode.HTML)
+        response = response[:4000] + "\n...(내용이 너무 길어 생략됨)"
+
+    # 5. 최종 메시지 전송 (에러 핸들링 포함)
+    try:
+        await msg.edit_text(response, parse_mode=ParseMode.HTML)
+    except error.BadRequest as e:
+        logger.error(f"❌ 텔레그램 메시지 전송 실패 (포맷 오류 가능성): {e}")
+        # HTML 파싱 에러일 경우, HTML 태그를 제거하고 일반 텍스트로 재시도
+        safe_text = (
+            response.replace("<b>", "")
+            .replace("</b>", "")
+            .replace("<code>", "")
+            .replace("</code>", "")
+        )
+        await msg.edit_text(f"⚠️ 포맷 오류로 일반 텍스트로 표시합니다.\n\n{safe_text}")
+    except Exception as e:
+        logger.error(f"❌ 알 수 없는 전송 오류: {e}")
+        await msg.edit_text(f"❌ 결과 전송 중 오류가 발생했습니다.")
 
 
 # --- 조회 핸들러 ---
@@ -123,6 +160,9 @@ async def show_month_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, last_day = calendar.monthrange(today.year, today.month)
     start = today.replace(day=1)
     end = today.replace(day=last_day)
+    # [디버깅] 검색 범위 로그 출력
+    logger.info(f"이번 달 검색 요청: {start} ~ {end}")
+
     await _fetch_and_send_events(
         update,
         context,
@@ -200,24 +240,26 @@ async def search_events_keyword_received(
 ) -> int:
     keyword = update.message.text.strip()
     msg = await update.message.reply_text(f"🔎 '{keyword}' 검색 중...")
-    await context.bot.send_chat_action(
-        update.effective_chat.id, action=ChatAction.TYPING
-    )
 
     start = datetime.now()
     end = start + timedelta(days=90)
-    success, all_events = await asyncio.to_thread(
-        caldav_service.fetch_events, start, end
-    )
+
+    result_tuple = await asyncio.to_thread(caldav_service.fetch_events, start, end)
+    success = result_tuple[0]
+    all_events = result_tuple[1]
 
     if success:
         filtered = [e for e in all_events if keyword.lower() in e["summary"].lower()]
         if filtered:
+            # 5. 검색 결과 표시 부분도 안전하게 수정
             res_text = (
                 f"🔎 <b>'{html.escape(keyword)}'</b> 검색 결과 ({len(filtered)}건):\n"
             )
             for evt in filtered[:15]:
-                res_text += "• " + formatters.format_event_to_html(evt) + "\n"
+                try:
+                    res_text += f" • {formatters.format_event_to_html(evt)}\n"
+                except:
+                    continue
             await msg.edit_text(res_text, parse_mode=ParseMode.HTML)
         else:
             await msg.edit_text("검색 결과가 없습니다.")
@@ -233,23 +275,35 @@ async def addevent_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await clear_other_conversations(context, ["new_event_details"])
     context.user_data["new_event_details"] = {}
     msg = await update.message.reply_text("📅 캘린더 목록을 가져오는 중...")
-    success, calendars = await asyncio.to_thread(caldav_service.get_calendars)
 
-    if not success or not calendars:
+    res = await asyncio.to_thread(caldav_service.get_calendars)
+    calendars = res if isinstance(res, list) else []
+
+    if not calendars:
         await msg.edit_text("❌ 캘린더 목록을 가져오지 못했습니다.")
         return ConversationHandler.END
 
     keyboard = []
-    context.user_data["_available_calendars"] = {c["name"]: c["url"] for c in calendars}
-    for name in context.user_data["_available_calendars"]:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    f"📅 {name}", callback_data=f"addevent_cal_name_{name[:40]}"
-                )
-            ]
-        )
+    available_cals = {}
+
+    for c in calendars:
+        try:
+            c_name = getattr(c, "name", str(c))
+            c_url = str(getattr(c, "url", ""))
+            available_cals[c_name] = c_url
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        f"📅 {c_name}", callback_data=f"addevent_cal_name_{c_name[:40]}"
+                    )
+                ]
+            )
+        except Exception:
+            continue
+
+    context.user_data["_available_calendars"] = available_cals
     keyboard.append([InlineKeyboardButton("🚫 취소", callback_data="addevent_cancel")])
+
     await msg.edit_text(
         "어떤 캘린더에 추가하시겠습니까?", reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -327,15 +381,17 @@ async def addevent_end_received(
 
     msg = await update.message.reply_text("⏳ 저장 중...")
     details = context.user_data["new_event_details"]
-    success, res = await asyncio.to_thread(
+
+    res_tuple = await asyncio.to_thread(
         caldav_service.add_event, details["calendar_url"], details
     )
+    success, res_msg = res_tuple
 
-    await msg.edit_text(f"✅ {res}" if success else f"❌ {res}")
+    await msg.edit_text(f"✅ {res_msg}" if success else f"❌ {res_msg}")
     return ConversationHandler.END
 
 
-# 더미 핸들러들
+# 더미 핸들러 (삭제 등)
 async def deleteevent_start(update, context):
     return ConversationHandler.END
 

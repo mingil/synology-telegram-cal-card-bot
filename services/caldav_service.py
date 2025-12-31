@@ -1,162 +1,164 @@
 # services/caldav_service.py
-import logging
 import caldav
-from datetime import datetime, date
-from typing import List, Dict, Any, Tuple, Union, Optional
-
+from datetime import datetime, date, timedelta
+import logging
 from core import config
-from utils import date_utils
 
+# 로깅 레벨 설정
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-def _get_client(url: str, username: str, password: str) -> caldav.DAVClient:
-    """CalDAV 클라이언트 생성"""
-    return caldav.DAVClient(
-        url=url,
-        username=username,
-        password=password
-    )
-
-def fetch_events(start_dt: datetime, end_dt: datetime, 
-                 url: str = config.CALDAV_URL, 
-                 username: str = config.CALDAV_USERNAME, 
-                 password: str = config.CALDAV_PASSWORD) -> Tuple[bool, Union[List[Dict[str, Any]], str]]:
-    """
-    지정된 기간의 일정을 조회합니다.
-    반환값: (성공여부, 결과리스트 또는 에러메시지)
-    """
+def get_calendar_client():
+    """CalDAV 클라이언트 연결 및 반환"""
     try:
-        client = _get_client(url, username, password)
+        if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASSWORD]):
+            logger.error("❌ CalDAV 설정 누락")
+            return None
+
+        client = caldav.DAVClient(
+            url=config.CALDAV_URL,
+            username=config.CALDAV_USER,
+            password=config.CALDAV_PASSWORD
+        )
+        return client
+    except Exception as e:
+        logger.error(f"❌ CalDAV 클라이언트 연결 실패: {e}")
+        return None
+
+def get_calendars():
+    """모든 캘린더 목록 반환"""
+    client = get_calendar_client()
+    if not client:
+        return []
+    
+    try:
+        principal = client.principal()
+        return principal.calendars()
+    except Exception as e:
+        logger.error(f"❌ 캘린더 목록 조회 실패: {e}")
+        return []
+
+def add_event(calendar_url, event_details):
+    """일정 추가"""
+    client = get_calendar_client()
+    if not client:
+        return False, "서버 연결 실패"
+
+    try:
+        calendar = client.calendar(url=calendar_url)
+        
+        dtstart = event_details.get("dtstart")
+        dtend = event_details.get("dtend")
+        summary = event_details.get("summary", "제목 없음")
+        
+        calendar.save_event(
+            dtstart=dtstart,
+            dtend=dtend,
+            summary=summary
+        )
+        return True, "일정이 추가되었습니다."
+    except Exception as e:
+        logger.error(f"일정 추가 실패: {e}")
+        return False, f"추가 실패: {str(e)}"
+
+def fetch_events(start_date: datetime, end_date: datetime):
+    """
+    특정 기간 내의 모든 일정 조회
+    [수정] 타임존(offset) 충돌 방지를 위해 모든 시간을 Naive로 변환
+    """
+    client = get_calendar_client()
+    if not client:
+        return False, "서버 연결 실패"
+
+    try:
         principal = client.principal()
         calendars = principal.calendars()
         
-        events_result = []
+        all_events = []
         
-        if not calendars:
-            return True, []
+        # 검색 범위도 Naive로 확실하게 통일
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
 
+        logger.info(f"🔍 검색 시작: {start_date} ~ {end_date}")
+        
         for calendar in calendars:
-            # caldav 라이브러리의 date_search 사용
-            found = calendar.date_search(start=start_dt, end=end_dt, expand=True)
+            try:
+                # 캘린더 검색
+                found = calendar.search(
+                    start=start_date, 
+                    end=end_date, 
+                    event=True, 
+                    expand=True
+                )
+            except Exception as e:
+                # 검색 실패 시 로그만 남기고 다음 캘린더로
+                continue
             
             for event in found:
-                # 데이터 파싱
-                vevent = event.instance.vevent
-                summary = str(vevent.summary.value)
-                
-                dtstart = vevent.dtstart.value
-                dtend = None
-                if hasattr(vevent, 'dtend'):
-                    dtend = vevent.dtend.value
+                try:
+                    # 1. 데이터 파싱 시도
+                    if hasattr(event, 'instance') and hasattr(event.instance, 'vevent'):
+                        vevent = event.instance.vevent
+                    elif hasattr(event, 'vobject_instance') and hasattr(event.vobject_instance, 'vevent'):
+                        vevent = event.vobject_instance.vevent
+                    else:
+                        continue # 구조가 복잡하면 패스
 
-                # 종일 일정 여부 확인
-                is_allday = False
-                if isinstance(dtstart, date) and not isinstance(dtstart, datetime):
-                    is_allday = True
-                
-                # datetime 변환 (비교 및 출력을 위해)
-                if is_allday:
-                    start_str = dtstart.strftime('%Y-%m-%d')
-                    end_str = dtend.strftime('%Y-%m-%d') if dtend else ""
-                else:
-                    start_str = dtstart.strftime('%H:%M')
-                    end_str = dtend.strftime('%H:%M') if dtend else ""
+                    # 2. 제목 가져오기
+                    summary = getattr(vevent.summary, 'value', '제목 없음')
+                    
+                    # 3. 시작 시간 가져오기 및 변환 (가장 중요)
+                    if hasattr(vevent, 'dtstart'):
+                        dtstart = vevent.dtstart.value
+                    else:
+                        continue
 
-                events_result.append({
-                    'summary': summary,
-                    'start_time_str': start_str,
-                    'end_time_str': end_str,
-                    'is_allday': is_allday,
-                    'start_dt': dtstart, # 정렬용 원본 데이터
-                    'url': str(event.url) # 삭제 시 필요
-                })
+                    # 4. 종료 시간 가져오기
+                    dtend = None
+                    if hasattr(vevent, 'dtend'):
+                        dtend = vevent.dtend.value
 
-        # 시간순 정렬
-        events_result.sort(key=lambda x: (isinstance(x['start_dt'], date) and not isinstance(x['start_dt'], datetime), x['start_dt']))
+                    is_allday = False
+                    
+                    # [핵심 수정] 
+                    # datetime이 아닌 date 객체(종일 일정)라면 datetime으로 변환
+                    if not isinstance(dtstart, datetime):
+                        is_allday = True
+                        dtstart = datetime.combine(dtstart, datetime.min.time())
+                        if dtend and not isinstance(dtend, datetime):
+                            dtend = datetime.combine(dtend, datetime.min.time())
+
+                    # [핵심 수정] 
+                    # 타임존 정보가 있다면 무조건 제거(Naive로 변환)하여 충돌 방지
+                    if dtstart.tzinfo is not None:
+                        dtstart = dtstart.replace(tzinfo=None)
+                    
+                    if dtend and isinstance(dtend, datetime) and dtend.tzinfo is not None:
+                        dtend = dtend.replace(tzinfo=None)
+                    
+                    # 리스트에 추가
+                    event_data = {
+                        'summary': summary,
+                        'start': dtstart,  # 이제 무조건 Naive datetime
+                        'end': dtend,
+                        'is_allday': is_allday,
+                        'calendar': calendar.name,
+                        'url': str(event.url) if hasattr(event, 'url') else ""
+                    }
+                    all_events.append(event_data)
+                    
+                except Exception:
+                    continue
+
+        # 이제 모든 start 시간이 Naive 상태이므로 정렬 시 에러가 나지 않음
+        all_events.sort(key=lambda x: x['start'])
         
-        return True, events_result
+        logger.info(f"✅ 최종 추출된 일정: {len(all_events)}개")
+        return True, all_events
 
     except Exception as e:
-        logger.error(f"CalDAV 조회 오류: {e}", exc_info=True)
-        return False, f"일정 조회 실패: {str(e)}"
-
-def add_event(calendar_url: str, event_data: Dict[str, Any],
-              base_url: str = config.CALDAV_URL,
-              username: str = config.CALDAV_USERNAME,
-              password: str = config.CALDAV_PASSWORD) -> Tuple[bool, str]:
-    """새 일정을 추가합니다."""
-    try:
-        client = _get_client(base_url, username, password)
-        # 특정 캘린더 객체 찾기 (URL 매칭이 어려우면 첫 번째 캘린더 사용 등 로직 조정 필요)
-        # 여기서는 간단히 calendar_url로 캘린더 객체를 복원한다고 가정하거나
-        # principal.calendar(cal_id) 등을 사용해야 함. 
-        # *편의상* 가장 간단한 '첫번째 캘린더' 혹은 '기본 캘린더'에 추가하는 방식으로 구현합니다.
-        
-        principal = client.principal()
-        calendars = principal.calendars()
-        target_calendar = calendars[0] if calendars else None
-        
-        # 만약 calendar_url로 정확히 찾으려면 반복문으로 url 비교 필요
-        if calendar_url:
-            for cal in calendars:
-                if str(cal.url) == calendar_url:
-                    target_calendar = cal
-                    break
-        
-        if not target_calendar:
-            return False, "대상 캘린더를 찾을 수 없습니다."
-
-        # 이벤트 생성
-        target_calendar.save_event(
-            dtstart=event_data['dtstart'],
-            dtend=event_data['dtend'],
-            summary=event_data['summary'],
-            description=event_data.get('description', '')
-        )
-        return True, f"일정 '{event_data['summary']}' 추가 완료!"
-
-    except Exception as e:
-        logger.error(f"일정 추가 실패: {e}", exc_info=True)
-        return False, f"오류 발생: {e}"
-
-def delete_event(event_url: str,
-                 base_url: str = config.CALDAV_URL,
-                 username: str = config.CALDAV_USERNAME,
-                 password: str = config.CALDAV_PASSWORD) -> Tuple[bool, str]:
-    """일정 삭제 (URL 기반)"""
-    try:
-        client = _get_client(base_url, username, password)
-        # event_url을 통해 이벤트 객체를 로드하고 삭제
-        # caldav 라이브러리 버전에 따라 event_by_url 지원 여부 확인 필요
-        # 여기서는 calendar 검색 후 url 매칭 방식 사용 (안전함)
-        
-        principal = client.principal()
-        calendars = principal.calendars()
-        
-        for calendar in calendars:
-            # 캘린더 내 이벤트 검색 (최적화 필요할 수 있음)
-            # URL을 알고 있으므로 client.event_by_url(event_url) 시도
-            try:
-                event = client.event_by_url(event_url)
-                event.delete()
-                return True, "일정이 삭제되었습니다."
-            except:
-                continue
-
-        return False, "해당 일정을 찾을 수 없습니다."
-
-    except Exception as e:
-        logger.error(f"삭제 오류: {e}")
-        return False, str(e)
-
-def get_calendars(url: str = config.CALDAV_URL, 
-                  username: str = config.CALDAV_USERNAME, 
-                  password: str = config.CALDAV_PASSWORD) -> Tuple[bool, List[Dict[str, str]]]:
-    """사용 가능한 캘린더 목록 조회"""
-    try:
-        client = _get_client(url, username, password)
-        calendars = client.principal().calendars()
-        result = [{'name': c.name or "캘린더", 'url': str(c.url)} for c in calendars]
-        return True, result
-    except Exception as e:
-        return False, []
+        logger.error(f"❌ 전체 일정 조회 프로세스 실패: {e}")
+        return False, f"조회 오류: {str(e)}"
