@@ -51,12 +51,10 @@ We highly recommend running this bot via Docker Compose for maximum stability.
 
 ### 1. Clone the repository
 ```bash
-git clone [https://github.com/yourusername/bot-cal-card.git](https://github.com/yourusername/bot-cal-card.git)
+git clone [https://github.com/mingil/bot-cal-card.git](https://github.com/mingil/bot-cal-card.git)
 cd bot-cal-card
 
 ```
-
-*(Replace `yourusername` with your actual GitHub username)*
 
 ### 2. Configure Environment Variables
 
@@ -146,7 +144,3 @@ Here is the list of commands you can use in Telegram:
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
-
-```
-
----
