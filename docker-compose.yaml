@@ -1,14 +1,22 @@
-# /volume1/docker/bot-cal-card/docker-compose.yml
 version: '3.8'
 
 services:
   bot:
     container_name: bot-cal-card
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # NAS 환경에서 가장 안정적인 재시작 옵션
     restart: on-failure:5
     env_file: .env
     environment:
       - TZ=Asia/Seoul
     volumes:
-      # 현재 폴더(.)를 통째로 연결해서 DB가 저장되게 함
-      - .:/app
+      # [최적화 핵심] 코드 꼬임 방지를 위해 전체 마운트(.:/app)를 없애고
+      # 알림 기록 DB와 로그가 담긴 data 폴더만 안전하게 연결합니다!
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

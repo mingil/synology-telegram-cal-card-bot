@@ -1,34 +1,36 @@
-# Python cache
+# ==========================================
+# 🐍 Python Caches & Virtual Environments
+# ==========================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.pyo
 *.pyd
 *.[oa]
-
-# Virtual environment
-.venv
-venv
-env
-ENV
+.venv/
+venv/
+env/
+ENV/
 pip-freeze.txt
 pipenv-setup.lock
 
-# Sensitive configuration file
+# ==========================================
+# 🔐 Sensitive Data & Local Files
+# ==========================================
 .env
-
-# Database file (Users should generate their own)
 data/
 *.db
 *.sqlite
 *.sqlite3
+*.log
+all_bot_code.txt
 
-# IDE / Editor directories
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
-
-# OS generated files
+# ==========================================
+# 🛑 Synology & OS Specific
+# ==========================================
+@eaDir/
+@eaDir
+*@SynoEAStream
 .DS_Store
 .DS_Store?
 ._*
@@ -37,5 +39,10 @@ data/
 ehthumbs.db
 Thumbs.db
 
-# Docker related (optional, depending on your setup)
-# docker-compose.override.yml
+# ==========================================
+# 💻 IDE & Editor
+# ==========================================
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace

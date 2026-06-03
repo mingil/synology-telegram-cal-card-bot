@@ -1,8 +1,12 @@
-# bot.py
+import os
 import logging
+from logging.handlers import (
+    RotatingFileHandler,
+)  # 👈 [추가] 로그 파일 자동 순환(Rotation) 기능
 import datetime
 import html
 import pytz
+from telegram.error import NetworkError, TimedOut
 from telegram import Update, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
@@ -25,12 +29,58 @@ import handlers.contact as h_contact
 import handlers.ai as h_ai
 import handlers.common as h_common
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=config.LOG_LEVEL,
+# =========================================================
+# 📝 실무형 로깅 설정 (콘솔 + 파일 동시 출력 및 용량 방어)
+# =========================================================
+# 1. 로그 파일이 저장될 물리적 경로 (볼륨 마운트된 data 폴더 내부)
+LOG_FILE_PATH = os.path.join(config.DATA_DIR, "bot.log")
+
+# 2. 로그 포맷 정의 (시간 - 모듈명 - 에러등급 - 내용)
+log_formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
+# 3. 최상위(Root) 로거 가져오기 및 초기화
+root_logger = logging.getLogger()
+root_logger.setLevel(config.LOG_LEVEL)
+
+# 중복 출력을 막기 위해 기존 핸들러 초기화
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+
+# 4. 파일 핸들러 (NAS 디스크에 물리적으로 저장: 최대 5MB씩 3개까지만 백업 보관)
+try:
+    file_handler = RotatingFileHandler(
+        LOG_FILE_PATH, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(log_formatter)
+    root_logger.addHandler(file_handler)
+except Exception as e:
+    print(f"⚠️ 로그 파일 생성 실패: {e}")
+
+# 5. 콘솔 핸들러 (시놀로지 Container Manager 화면에도 동시 출력)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
 
+# 👇 서드파티 라이브러리의 불필요한 네트워크 스팸 로그 억제 (매우 중요)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+# =========================================================
+
+# =========================================================
+# 🛡️ 글로벌 에러 핸들러 (네트워크 에러 로그 최소화)
+# =========================================================
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """텔레그램 API 지연 등 자잘한 에러를 깔끔하게 한 줄로 로깅하는 핸들러"""
+    if isinstance(context.error, (NetworkError, TimedOut)) or "Bad Gateway" in str(context.error):
+        logger.warning(f"⚠️ 텔레그램 서버 일시 지연 (자동 복구됨): {context.error}")
+    else:
+        # 치명적인 에러일 경우에만 자세히 출력
+        logger.error(f"❌ 예기치 않은 오류 발생: {context.error}", exc_info=context.error)
 
 async def post_init(application: Application):
     logger.info("✅ 봇 초기화 완료 - Version 2.2 (Conversational Admin)")
@@ -366,8 +416,11 @@ def main():
         except Exception as e:
             logger.error(f"스케줄러 등록 실패: {e}")
 
+# 👇 기존 명령어 핸들러들 등록된 코드 아래쪽, run_polling 바로 위에 추가!
+    application.add_error_handler(global_error_handler)
+
     logger.info("🟢 봇 폴링 시작!")
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

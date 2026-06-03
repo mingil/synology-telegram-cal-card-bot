@@ -1,164 +1,117 @@
-# services/caldav_service.py
 import caldav
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 import logging
+import zoneinfo
 from core import config
 
-# 로깅 레벨 설정
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+NETWORK_TIMEOUT = 10.0
 
 def get_calendar_client():
-    """CalDAV 클라이언트 연결 및 반환"""
-    try:
-        if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASSWORD]):
-            logger.error("❌ CalDAV 설정 누락")
-            return None
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASSWORD]):
+        logger.error("❌ CalDAV 설정 누락")
+        return None
 
-        client = caldav.DAVClient(
+    try:
+        # timeout 인자 주입으로 NAS 연결 불량 시 봇 무한 대기 차단
+        return caldav.DAVClient(
             url=config.CALDAV_URL,
             username=config.CALDAV_USER,
-            password=config.CALDAV_PASSWORD
+            password=config.CALDAV_PASSWORD,
+            timeout=NETWORK_TIMEOUT
         )
-        return client
     except Exception as e:
         logger.error(f"❌ CalDAV 클라이언트 연결 실패: {e}")
         return None
 
 def get_calendars():
-    """모든 캘린더 목록 반환"""
-    client = get_calendar_client()
-    if not client:
-        return []
-    
-    try:
-        principal = client.principal()
-        return principal.calendars()
-    except Exception as e:
-        logger.error(f"❌ 캘린더 목록 조회 실패: {e}")
-        return []
+    if client := get_calendar_client():
+        try:
+            calendars = client.principal().calendars()
+            # 특정 캘린더가 지정되었다면 그것만 필터링하여 탐색 속도 향상
+            if config.CALENDAR_NAME:
+                filtered = [c for c in calendars if c.name == config.CALENDAR_NAME]
+                return filtered if filtered else calendars
+            return calendars
+        except Exception as e:
+            logger.error(f"❌ 캘린더 목록 조회 실패: {e}")
+    return []
 
-def add_event(calendar_url, event_details):
-    """일정 추가"""
-    client = get_calendar_client()
-    if not client:
+def add_event(calendar_url: str, event_details: dict) -> tuple[bool, str]:
+    if not (client := get_calendar_client()):
         return False, "서버 연결 실패"
 
     try:
         calendar = client.calendar(url=calendar_url)
-        
-        dtstart = event_details.get("dtstart")
-        dtend = event_details.get("dtend")
-        summary = event_details.get("summary", "제목 없음")
-        
         calendar.save_event(
-            dtstart=dtstart,
-            dtend=dtend,
-            summary=summary
+            dtstart=event_details.get("dtstart"),
+            dtend=event_details.get("dtend"),
+            summary=event_details.get("summary", "제목 없음")
         )
-        return True, "일정이 추가되었습니다."
+        return True, "✅ 일정이 추가되었습니다."
     except Exception as e:
-        logger.error(f"일정 추가 실패: {e}")
+        logger.error(f"❌ 일정 추가 실패: {e}")
         return False, f"추가 실패: {str(e)}"
 
+def _make_naive(dt):
+    """[핵심] 안전하게 한국 시간으로 변경 후 타임존 정보를 삭제하는 헬퍼 함수"""
+    if isinstance(dt, datetime) and dt.tzinfo is not None:
+        try:
+            tz = zoneinfo.ZoneInfo(config.TIMEZONE)
+            return dt.astimezone(tz).replace(tzinfo=None)
+        except Exception:
+            return dt.replace(tzinfo=None)
+    return dt
+
 def fetch_events(start_date: datetime, end_date: datetime):
-    """
-    특정 기간 내의 모든 일정 조회
-    [수정] 타임존(offset) 충돌 방지를 위해 모든 시간을 Naive로 변환
-    """
-    client = get_calendar_client()
-    if not client:
-        return False, "서버 연결 실패"
+    calendars = get_calendars()
+    if not calendars:
+        return False, "서버 연결 실패 또는 캘린더 없음"
 
     try:
-        principal = client.principal()
-        calendars = principal.calendars()
-        
         all_events = []
-        
-        # 검색 범위도 Naive로 확실하게 통일
-        if start_date.tzinfo is not None:
-            start_date = start_date.replace(tzinfo=None)
-        if end_date.tzinfo is not None:
-            end_date = end_date.replace(tzinfo=None)
+        start_date = _make_naive(start_date)
+        end_date = _make_naive(end_date)
 
-        logger.info(f"🔍 검색 시작: {start_date} ~ {end_date}")
-        
+        logger.info(f"🔍 캘린더 검색 시작: {start_date} ~ {end_date}")
+
         for calendar in calendars:
             try:
-                # 캘린더 검색
-                found = calendar.search(
-                    start=start_date, 
-                    end=end_date, 
-                    event=True, 
-                    expand=True
-                )
-            except Exception as e:
-                # 검색 실패 시 로그만 남기고 다음 캘린더로
+                found = calendar.search(start=start_date, end=end_date, event=True, expand=True)
+            except Exception:
                 continue
-            
+
             for event in found:
                 try:
-                    # 1. 데이터 파싱 시도
-                    if hasattr(event, 'instance') and hasattr(event.instance, 'vevent'):
-                        vevent = event.instance.vevent
-                    elif hasattr(event, 'vobject_instance') and hasattr(event.vobject_instance, 'vevent'):
-                        vevent = event.vobject_instance.vevent
-                    else:
-                        continue # 구조가 복잡하면 패스
-
-                    # 2. 제목 가져오기
-                    summary = getattr(vevent.summary, 'value', '제목 없음')
-                    
-                    # 3. 시작 시간 가져오기 및 변환 (가장 중요)
-                    if hasattr(vevent, 'dtstart'):
-                        dtstart = vevent.dtstart.value
-                    else:
+                    vevent = getattr(getattr(event, 'instance', None), 'vevent', None) or \
+                             getattr(getattr(event, 'vobject_instance', None), 'vevent', None)
+                    if not vevent or not hasattr(vevent, 'dtstart'):
                         continue
 
-                    # 4. 종료 시간 가져오기
-                    dtend = None
-                    if hasattr(vevent, 'dtend'):
-                        dtend = vevent.dtend.value
+                    summary = getattr(vevent.summary, 'value', '제목 없음')
+                    dtstart = vevent.dtstart.value
+                    dtend = getattr(vevent.dtend, 'value', None) if hasattr(vevent, 'dtend') else None
 
-                    is_allday = False
-                    
-                    # [핵심 수정] 
-                    # datetime이 아닌 date 객체(종일 일정)라면 datetime으로 변환
-                    if not isinstance(dtstart, datetime):
-                        is_allday = True
+                    # 종일 일정(date) -> datetime 자동 치환 로직 간소화
+                    is_allday = not isinstance(dtstart, datetime)
+                    if is_allday:
                         dtstart = datetime.combine(dtstart, datetime.min.time())
                         if dtend and not isinstance(dtend, datetime):
                             dtend = datetime.combine(dtend, datetime.min.time())
 
-                    # [핵심 수정] 
-                    # 타임존 정보가 있다면 무조건 제거(Naive로 변환)하여 충돌 방지
-                    if dtstart.tzinfo is not None:
-                        dtstart = dtstart.replace(tzinfo=None)
-                    
-                    if dtend and isinstance(dtend, datetime) and dtend.tzinfo is not None:
-                        dtend = dtend.replace(tzinfo=None)
-                    
-                    # 리스트에 추가
-                    event_data = {
-                        'summary': summary,
-                        'start': dtstart,  # 이제 무조건 Naive datetime
-                        'end': dtend,
+                    all_events.append({
+                        'summary': str(summary),
+                        'start': _make_naive(dtstart),
+                        'end': _make_naive(dtend) if dtend else _make_naive(dtstart),
                         'is_allday': is_allday,
                         'calendar': calendar.name,
-                        'url': str(event.url) if hasattr(event, 'url') else ""
-                    }
-                    all_events.append(event_data)
-                    
+                        'url': str(getattr(event, 'url', ''))
+                    })
                 except Exception:
                     continue
 
-        # 이제 모든 start 시간이 Naive 상태이므로 정렬 시 에러가 나지 않음
         all_events.sort(key=lambda x: x['start'])
-        
-        logger.info(f"✅ 최종 추출된 일정: {len(all_events)}개")
         return True, all_events
-
     except Exception as e:
-        logger.error(f"❌ 전체 일정 조회 프로세스 실패: {e}")
+        logger.error(f"❌ 전체 일정 조회 실패: {e}")
         return False, f"조회 오류: {str(e)}"
