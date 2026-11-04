@@ -1,0 +1,17 @@
+services:
+  bot:
+    container_name: bot-cal-card
+    image: kimmingil/bot-cal-card:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=${TZ:-Asia/Seoul}
+      - PUID=${PUID:-1026}
+      - PGID=${PGID:-100}
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

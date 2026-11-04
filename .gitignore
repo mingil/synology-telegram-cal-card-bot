@@ -1,0 +1,50 @@
+# ==========================================
+# 🐍 Python Caches & Virtual Environments
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.[oa]
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+pip-freeze.txt
+pipenv-setup.lock
+
+# ==========================================
+# 🔐 Sensitive Data & Local Files
+# ==========================================
+.env
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+all_bot_code.txt
+make_txt.py
+
+# ==========================================
+# 🛑 Synology & OS Specific
+# ==========================================
+@eaDir/
+@eaDir
+*@SynoEAStream
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ==========================================
+# 💻 IDE & Editor
+# ==========================================
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace

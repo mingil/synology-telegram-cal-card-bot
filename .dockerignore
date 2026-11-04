@@ -1,0 +1,33 @@
+# Git & CI/CD
+.git/
+.gitignore
+.github/
+
+# 시놀로지 시스템 파일
+@eaDir/
+*@SynoEAStream
+
+# 파이썬 캐시 및 가상환경/테스트
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+.pytest_cache/
+tests/
+
+# 환경변수 및 백업 파일
+.env
+.env.*
+*.bak
+*.tmp
+
+# 문서 및 임시 파일
+README.md
+LICENSE
+all_bot_code.txt
+make_txt.py
+
+# 데이터 폴더 (볼륨 마운트하므로 도커 이미지에 포함할 필요 없음)
+data/
