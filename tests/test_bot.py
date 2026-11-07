@@ -156,7 +156,14 @@ def test_notification_service_lunar_and_solar_detection(temp_db):
     assert "음력 어머니 생신" in bodies
     assert "결혼기념일 &lt;10주년&gt;" in bodies
 
-    # 3. 재실행 시 DB 중복 방지 로직으로 0건이 반환되어야 함
+    # 3. 발송 전(기록 전)에 재실행하면 같은 알림이 다시 나와야 함 → 발송 실패 시 유실 방지
+    with patch("services.caldav_service.fetch_events", side_effect=fake_fetch_events):
+        notis_retry = notification_service.check_anniversaries()
+    assert len(notis_retry) == 2
+
+    # 4. 발송 성공으로 기록한 뒤 재실행하면 DB 중복 방지 로직으로 0건이어야 함
+    for n in notis:
+        database.mark_notification_sent(*n["mark"])
     with patch("services.caldav_service.fetch_events", side_effect=fake_fetch_events):
         notis_second = notification_service.check_anniversaries()
     assert len(notis_second) == 0

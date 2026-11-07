@@ -130,8 +130,13 @@ def check_anniversaries() -> list[dict]:
                 ).strip()
                 email_subject = f"📅 [{short_d_day}] {summary}"
 
-                notifications.append({"subject": email_subject, "body": msg_body})
-                database.mark_notification_sent(uid, str(target_solar_date), noti_type)
+                # 발송 기록(mark)은 실제 발송에 성공한 뒤 run_daily_checks 에서 한다.
+                # (예전에는 여기서 먼저 기록해, 발송이 실패하면 그 알림이 영영 나가지 않았음)
+                notifications.append({
+                    "subject": email_subject,
+                    "body": msg_body,
+                    "mark": (uid, str(target_solar_date), noti_type),
+                })
 
     return notifications
 
@@ -140,8 +145,10 @@ async def _safe_send_telegram(bot, chat_id, text):
     """텔레그램 메시지 발송 실패 시 봇 전체가 멈추는 것을 방지하는 헬퍼 함수"""
     try:
         await bot.send_message(chat_id, text, parse_mode="HTML")
+        return True
     except Exception as e:
         logger.error(f"❌ 텔레그램 병렬 전송 실패: {e}")
+        return False
 
 
 async def run_daily_checks(bot_app):
@@ -151,24 +158,35 @@ async def run_daily_checks(bot_app):
     if not noti_list:
         return
 
-    # [최적화 핵심] 순차 발송 방식에서 -> 모든 작업을 모아 한 번에 병렬 전송(Gather)하는 방식으로 변경
-    tasks = []
-    for item in noti_list:
+    async def _deliver(item) -> bool:
+        """한 알림을 텔레그램·메일로 병렬 발송하고, 한 채널이라도 성공하면 발송 기록을 남긴다."""
+        channels = []
         if config.TARGET_CHAT_ID:
-            tasks.append(
+            channels.append(
                 _safe_send_telegram(bot_app.bot, config.TARGET_CHAT_ID, item["body"])
             )
-
         if config.SMTP_EMAIL and config.SMTP_PASSWORD:
-            tasks.append(
+            channels.append(
                 asyncio.to_thread(
                     email_service.send_email, item["subject"], item["body"]
                 )
             )
+        if not channels:
+            return False
 
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
+        delivered = False
+        for res in await asyncio.gather(*channels, return_exceptions=True):
             if isinstance(res, Exception):
                 logger.error(f"❌ 알림 발송 중 에러: {res}")
-        logger.info(f"✅ {len(noti_list)}건의 스케줄 알림 비동기 처리 완료")
+            elif res:
+                delivered = True
+
+        if delivered:
+            await asyncio.to_thread(database.mark_notification_sent, *item["mark"])
+        else:
+            logger.warning(f"⚠️ 모든 채널 발송 실패 — 기록하지 않음(다음 체크에서 재시도): {item['subject']}")
+        return delivered
+
+    # 알림별로 병렬 발송 (성공한 것만 기록)
+    outcomes = await asyncio.gather(*(_deliver(item) for item in noti_list))
+    logger.info(f"✅ 스케줄 알림 {sum(outcomes)}/{len(noti_list)}건 발송 완료")
